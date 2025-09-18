@@ -3,42 +3,72 @@ from bs4 import BeautifulSoup
 import re
 import os
 
-# 目标URL列表
-urls = ['https://api.uouin.com/cloudflare.html', 
-        'https://ip.164746.xyz'
-        ]
+urls = [
+    'https://api.uouin.com/cloudflare.html',
+    'https://ip.164746.xyz'
+]
 
-# 正则表达式用于匹配IP地址
-ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+# IPv4正则（严格匹配0-255范围）
+ipv4_pattern = re.compile(
+    r'((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}'
+    r'(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)'
+)
 
-# 检查ip.txt文件是否存在,如果存在则删除它
-if os.path.exists('ip.txt'):
-    os.remove('ip.txt')
+# IPv6正则（支持完整和缩写 ::）
+ipv6_pattern = re.compile(
+    r'(([0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}|'
+    r'([0-9a-fA-F]{1,4}:){1,7}:|'
+    r'::([0-9a-fA-F]{1,4}:?){0,6}[0-9a-fA-F]{0,4})'
+)
 
-# 创建一个文件来存储IP地址
-with open('ip.txt', 'w') as file:
-    for url in urls:
-        # 发送HTTP请求获取网页内容
-        response = requests.get(url)
-        
-        # 使用BeautifulSoup解析HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 根据网站的不同结构找到包含IP地址的元素
-        if url == 'https://api.uouin.com/cloudflare.html':
-            elements = soup.find_all('tr')
-        elif url == 'https://ip.164746.xyz':
-            elements = soup.find_all('tr')
-        else:
-            elements = soup.find_all('li')
-        
-        # 遍历所有元素,查找IP地址
-        for element in elements:
-            element_text = element.get_text()
-            ip_matches = re.findall(ip_pattern, element_text)
-            
-            # 如果找到IP地址,则写入文件
-            for ip in ip_matches:
-                file.write(ip + '\n')
+# 删除旧文件
+for f in ["ipv4.txt", "ipv6.txt"]:
+    if os.path.exists(f):
+        os.remove(f)
 
-print('IP地址已保存到ip.txt文件中。')
+ipv4_set = set()
+ipv6_set = set()
+
+for url in urls:
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"请求失败 {url}：{e}")
+        continue
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    if "cloudflare.html" in url or "164746.xyz" in url:
+        elements = soup.find_all('tr')
+    else:
+        elements = soup.find_all('li')
+
+    for element in elements:
+        text = element.get_text()
+
+        # 找IPv4
+        ipv4_matches = ipv4_pattern.findall(text)
+        for match in ipv4_matches:
+            ip = match[0][:-1] + match[-1] if isinstance(match, tuple) else match
+            ipv4_set.add(ip if isinstance(ip, str) else "".join(match))
+
+        # 找IPv6
+        ipv6_matches = ipv6_pattern.findall(text)
+        for match in ipv6_matches:
+            # match 是tuple，需要拼成字符串
+            ip = "".join(match).strip(":")
+            if ip:
+                ipv6_set.add(ip)
+
+# 保存 IPv4
+with open('ipv4.txt', 'w') as f4:
+    for ip in sorted(ipv4_set):
+        f4.write(ip + '\n')
+
+# 保存 IPv6
+with open('ipv6.txt', 'w') as f6:
+    for ip in sorted(ipv6_set):
+        f6.write(ip + '\n')
+
+print(f'提取到 {len(ipv4_set)} 个 IPv4，{len(ipv6_set)} 个 IPv6，已分别保存到 ipv4.txt 和 ipv6.txt。')
